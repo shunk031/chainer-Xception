@@ -25,6 +25,12 @@ class SeparableConv2D(chainer.Chain):
                 in_channels, out_channels, 1, 1, 0, dilate=1, group=1,
                 initialW=initialW, nobias=True)
 
+    def __call__(self, x):
+        h = self.conv1(x)
+        h = self.pointwise(h)
+
+        return h
+
 
 class Block(chainer.Chain):
 
