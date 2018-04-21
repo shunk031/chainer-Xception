@@ -111,7 +111,7 @@ class BuildingBlock(chainer.Chain):
 
 class Xception(chainer.Chain):
 
-    def __init__(self, num_classes=55):
+    def __init__(self, num_classes=1000):
         self.num_classes = num_classes
         initialW = normal.HeNormal(scale=1.0)
         super(Xception, self).__init__()
