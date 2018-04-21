@@ -19,10 +19,10 @@ class SeparableConv2D(chainer.Chain):
         super(SeparableConv2D, self).__init__()
         with self.init_scope():
             self.conv1 = L.Convolution2D(
-                in_channels, out_channels, ksize, stride, padding,
-                nobias=True, initialW=initialW, dilate=dilate, group=in_channels)
+                in_channels, in_channels, ksize, stride, padding,
+                nobias=True, initialW=initialW, dilate=dilate, groups=in_channels)
             self.pointwise = L.Convolution2D(
-                in_channels, out_channels, 1, 1, 0, dilate=1, group=1,
+                in_channels, out_channels, 1, 1, 0, dilate=1, groups=1,
                 initialW=initialW, nobias=True)
 
     def __call__(self, x):
@@ -40,13 +40,13 @@ class Block(chainer.Chain):
         super(Block, self).__init__()
         with self.init_scope():
             self.separable_conv = SeparableConv2D(
-                in_filters, out_filters, 3, stride=1, padding=1, initialw=initialW)
+                in_filters, out_filters, 3, stride=1, padding=1, initialW=initialW)
             self.bn = L.BatchNormalization(out_filters)
 
     def __call__(self, x):
         if self.start_with_relu:
-            h = F.relu(x)
-        h = self.bn(self.separable_conv(h))
+            x = F.relu(x)
+        h = self.bn(self.separable_conv(x))
 
         return h
 
@@ -62,43 +62,43 @@ class BuildingBlock(chainer.Chain):
                  grow_first=True):
 
         self.strides = strides
+        super(BuildingBlock, self).__init__()
+        with self.init_scope():
+            if out_filters != in_filters or strides != 1:
+                self.skip = L.Convolution2D(
+                    in_filters, out_filters, 1, strides, initialW=initialW, nobias=True)
+                self.skipbn = L.BatchNormalization(out_filters)
+            else:
+                self.skip = None
 
-        if out_filters != in_filters or strides != 1:
-            self.skip = L.Convolution2D(
-                in_filters, out_filters, 1, strides, initialW=initialW, nobias=True)
-            self.skipbn = L.BatchNormalization(out_filters)
-        else:
-            self.skip = None
+            self._forward = []
+            filters = in_filters
+            if grow_first:
+                block_name = 'b_start'
+                block = Block(in_filters, out_filters, initialW, start_with_relu)
+                setattr(self, block_name, block)
+                self._forward.append(block_name)
+                filters = out_filters
 
-        self._forward = []
-        filters = in_filters
-        if grow_first:
-            block_name = 'b_start'
-            block = Block(in_filters, out_filters, initialW, start_with_relu)
-            setattr(self, block_name, block)
-            self._forward.append(block_name)
-            filters = out_filters
+            for i in range(1, reps):
+                block_name = 'b{}'.format(i)
+                block = Block(filters, filters, initialW)
+                setattr(self, block_name, block)
+                self._forward.append(block_name)
 
-        for i in range(1, reps):
-            block_name = 'b{}'.format(i)
-            block = Block(filters, out_filters, initialW)
-            setattr(self, block_name, block)
-            self._forward.append(block_name)
-
-        if not grow_first:
-            block_name = 'b_end'
-            block = Block(in_filters, out_filters)
-            setattr(self, block_name, block)
-            self._forward.append(block_name)
+            if not grow_first:
+                block_name = 'b_end'
+                block = Block(in_filters, out_filters)
+                setattr(self, block_name, block)
+                self._forward.append(block_name)
 
     def __call__(self, x):
         h = x
         for name in self._forward:
-            l = getattr(self, name)
-            h = l(h)
+            h = getattr(self, name)(h)
 
         if self.strides != 1:
-            h = F.max_pooling_2d(h, 3, self.strides, 1)
+            h = F.max_pooling_2d(h, 3, self.strides, 1, cover_all=False)
 
         if self.skip is not None:
             skip = self.skip(x)
@@ -111,7 +111,7 @@ class BuildingBlock(chainer.Chain):
 
 class Xception(chainer.Chain):
 
-    def __init__(self, num_classes=1000):
+    def __init__(self, num_classes=55):
         self.num_classes = num_classes
         initialW = normal.HeNormal(scale=1.0)
         super(Xception, self).__init__()
@@ -147,7 +147,7 @@ class Xception(chainer.Chain):
                 728, 728, 3, 1, initialW, start_with_relu=True, grow_first=True)
 
             self.block12 = BuildingBlock(
-                728, 1024, 3, 1, initialW, start_with_relu=True, grow_first=False)
+                728, 1024, 2, 2, initialW, start_with_relu=True, grow_first=False)
 
             self.conv3 = SeparableConv2D(1024, 1536, 3, 1, 1, initialW=initialW)
             self.bn3 = L.BatchNormalization(1536)
@@ -177,7 +177,14 @@ class Xception(chainer.Chain):
         h = F.relu(self.bn3(self.conv3(h)))
         h = F.relu(self.bn4(self.conv4(h)))
 
-        h = F.average_pooling_2d(h, 1)
+        h = _global_average_pooling_2d(h)
         h = self.fc(h)
 
         return h
+
+
+def _global_average_pooling_2d(x):
+    n, channel, rows, cols = x.data.shape
+    h = F.average_pooling_2d(x, (rows, cols), stride=1)
+    h = F.reshape(h, (n, channel))
+    return h
