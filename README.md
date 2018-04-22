@@ -5,7 +5,7 @@ This repository contains a [Chainer](https://chainer.org/) implementation for th
 ## Requirements
 
 - Chainer 4.0.0+
-- CuPy 4.0.0
+- CuPy 4.0.0+
 
 ## Reference
 
